@@ -1,1 +1,11 @@
-
+databaseChangeLog:
+  - changeSet:
+      id: "v1.0.0-users-setup"
+      author: "praveen"
+      comment: "Setup users collection and indexes"
+      changes:
+        - runCommand:
+            command: |
+              {
+                eval: "load('db/mongo/release/v1.0.0/users-setup.js')"
+              }
