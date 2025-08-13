@@ -1,0 +1,5 @@
+databaseChangeLog:
+  # Apply changes based on release version
+  - includeAll:
+      path: db/mongo/release/
+      resourceComparator: liquibase.util.file.AlphanumericFileComparator
