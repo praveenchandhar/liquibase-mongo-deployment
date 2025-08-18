@@ -1,15 +1,15 @@
 pipeline {
     agent any
-    
+
     tools {
         maven 'Maven-3.9'
     }
 
     parameters {
-        choice(
-            name: 'RELEASE_VERSION',
-            choices: ['v1.0.0', 'v1.1.0'],
-            description: 'Release version to deploy'
+        string(
+            name: 'RELEASE_PATH',
+            defaultValue: 'db/mongo/release/v1.0.0',
+            description: 'Path to release scripts (e.g., db/mongo/release/v1.0.0)'
         )
     }
 
@@ -22,10 +22,10 @@ pipeline {
             }
         }
 
-        stage('List Available Versions') {
+        stage('List Release Directory') {
             steps {
-                echo "📁 Available MongoDB release versions:"
-                sh "ls -la db/mongo/release/"
+                echo "📁 Listing files in the provided release path: ${params.RELEASE_PATH}"
+                sh "ls -la ${params.RELEASE_PATH}"
             }
         }
 
@@ -36,12 +36,14 @@ pipeline {
             }
         }
 
-        stage('Apply MongoDB Changes') {
+        stage('Apply Changes') {
             steps {
-                echo "🚀 Applying MongoDB changes from version: ${params.RELEASE_VERSION}"
+                echo "🚀 Applying MongoDB changes from path: ${params.RELEASE_PATH}"
+                
+                // Replace Maven Liquibase command with dynamic path below:
                 sh """
                     mvn liquibase:update \\
-                    -Dliquibase.includeAll.path=db/mongo/release/${params.RELEASE_VERSION}/
+                    -Dliquibase.includeAll.path=${params.RELEASE_PATH}
                 """
             }
         }
@@ -57,7 +59,7 @@ pipeline {
     post {
         success {
             echo "✅ MongoDB deployment completed successfully!"
-            echo "Version: ${params.RELEASE_VERSION}"
+            echo "Release path: ${params.RELEASE_PATH}"
         }
         failure {
             echo "❌ MongoDB deployment failed!"
