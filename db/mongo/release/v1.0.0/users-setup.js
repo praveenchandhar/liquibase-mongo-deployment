@@ -1,3 +1,6 @@
+// liquibase formatted mongodb
+// changeset praveen:v1.0.0-users-setup runWith:mongosh
+
 // Create the `users` collection
 db.createCollection("users");
 
