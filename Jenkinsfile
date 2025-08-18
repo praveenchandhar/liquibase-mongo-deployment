@@ -3,18 +3,13 @@ pipeline {
 
     parameters {
         choice(
-            name: 'DATABASE_TYPE',
-            choices: ['mongodb', 'mysql', 'postgresql'],
-            description: 'Select the database type'
-        )
-        choice(
             name: 'ACTION',
             choices: ['status', 'update', 'rollback'],
             description: 'Liquibase action to perform'
         )
         string(
             name: 'CHANGELOG_PATH',
-            defaultValue: 'db/mongo/release/v1.0.0/changelog.yaml',
+            defaultValue: 'db/mongo/release/v1.0.2/changelog.yaml',
             description: 'Complete path to the changelog file (any path supported)'
         )
         string(
@@ -24,15 +19,19 @@ pipeline {
         )
     }
 
+    tools {
+        // Use Maven tool configured in Jenkins
+        maven 'Maven-3.9.0' // Change this to match your Jenkins Maven tool name
+    }
+
     environment {
         // Common settings
         MAVEN_OPTS = "-Xmx512m"
         
-        // Database-specific settings will be set dynamically
-        DB_URL = ""
-        DB_USERNAME = ""
-        DB_PASSWORD = ""
-        DB_DRIVER = ""
+        // MongoDB settings from your liquibase.properties
+        DB_URL = "mongodb://127.0.0.1:27017/liquibase_db?authSource=admin"
+        DB_USERNAME = "praveents"
+        DB_PASSWORD = "EkafqheY5FzPgwyK"
         
         // Changeset tracking
         CHANGESETS_COUNT = "0"
@@ -44,7 +43,7 @@ pipeline {
             steps {
                 script {
                     echo "🔍 Validating parameters..."
-                    echo "Database Type: ${params.DATABASE_TYPE}"
+                    echo "Database Type: MongoDB"
                     echo "Action: ${params.ACTION}"
                     echo "Changelog Path: ${params.CHANGELOG_PATH}"
                     
@@ -68,51 +67,32 @@ pipeline {
             }
         }
 
-        stage('Setup Database Configuration') {
+        stage('Check Prerequisites') {
             steps {
-                script {
-                    echo "🗄️ Setting up configuration for: ${params.DATABASE_TYPE}"
+                echo "🔍 Checking prerequisites for MongoDB deployment..."
+                
+                sh '''
+                    echo "🔧 Java version:"
+                    java -version
                     
-                    // Set database-specific configurations
-                    switch(params.DATABASE_TYPE) {
-                        case 'mongodb':
-                            env.DB_URL = "mongodb://127.0.0.1:27017/liquibase_db?authSource=admin"
-                            env.DB_USERNAME = credentials('mongo-username')
-                            env.DB_PASSWORD = credentials('mongo-password')
-                            env.DB_DRIVER = ""
-                            echo "📋 MongoDB configuration loaded"
-                            break
-                            
-                        case 'mysql':
-                            env.DB_URL = "jdbc:mysql://localhost:3306/liquibase_db"
-                            env.DB_USERNAME = credentials('mysql-username')
-                            env.DB_PASSWORD = credentials('mysql-password')
-                            env.DB_DRIVER = "com.mysql.cj.jdbc.Driver"
-                            echo "📋 MySQL configuration loaded"
-                            break
-                            
-                        case 'postgresql':
-                            env.DB_URL = "jdbc:postgresql://localhost:5432/liquibase_db"
-                            env.DB_USERNAME = credentials('postgres-username')
-                            env.DB_PASSWORD = credentials('postgres-password')
-                            env.DB_DRIVER = "org.postgresql.Driver"
-                            echo "📋 PostgreSQL configuration loaded"
-                            break
-                            
-                        default:
-                            error("❌ Unsupported database type: ${params.DATABASE_TYPE}")
-                    }
+                    echo "🔧 Maven version:"
+                    mvn --version
                     
-                    echo "🔗 Database URL: ${env.DB_URL}"
-                    echo "📁 Changelog Path: ${params.CHANGELOG_PATH}"
-                    echo "🎯 Action: ${params.ACTION}"
-                }
+                    echo "📁 Current directory:"
+                    pwd
+                    
+                    echo "📂 Project structure:"
+                    ls -la
+                    
+                    echo "📋 Liquibase properties file:"
+                    ls -la liquibase.properties
+                '''
             }
         }
 
         stage('Verify Environment') {
             steps {
-                echo "🔍 Verifying environment and prerequisites"
+                echo "🔍 Verifying MongoDB environment and changelog file"
                 
                 script {
                     // Check if changelog file exists
@@ -124,14 +104,16 @@ pipeline {
                 }
                 
                 sh '''
-                    echo "📁 Project structure:"
-                    pwd && ls -la
-                    
                     echo "📂 Changelog file details:"
                     ls -la ${CHANGELOG_PATH}
                     
-                    echo "🔧 Maven version:"
-                    mvn --version
+                    echo "📂 Changelog content preview:"
+                    head -20 ${CHANGELOG_PATH}
+                    
+                    echo "🗄️ MongoDB connection details:"
+                    echo "Database URL: ${DB_URL}"
+                    echo "Username: ${DB_USERNAME}"
+                    echo "Password: [HIDDEN]"
                 '''
             }
         }
@@ -145,11 +127,14 @@ pipeline {
                 }
             }
             steps {
-                echo "📊 Checking Liquibase status for ${params.DATABASE_TYPE}"
+                echo "📊 Checking Liquibase status for MongoDB"
                 
                 script {
                     def statusCommand = buildLiquibaseCommand('status')
+                    echo "🔧 Executing command: ${statusCommand}"
+                    
                     def statusOutput = sh(script: statusCommand, returnStdout: true)
+                    echo "📄 Status output:\n${statusOutput}"
                     
                     // Extract changeset count from status output
                     env.CHANGESETS_COUNT = extractChangesetCount(statusOutput)
@@ -163,11 +148,14 @@ pipeline {
                 expression { params.ACTION == 'update' }
             }
             steps {
-                echo "🚀 Applying changes to ${params.DATABASE_TYPE} database"
+                echo "🚀 Applying changes to MongoDB database"
                 
                 script {
                     def updateCommand = buildLiquibaseCommand('update')
+                    echo "🔧 Executing command: ${updateCommand}"
+                    
                     def updateOutput = sh(script: updateCommand, returnStdout: true)
+                    echo "📄 Update output:\n${updateOutput}"
                     
                     // Extract actual changesets applied from update output
                     env.CHANGESETS_COUNT = extractAppliedChangesetCount(updateOutput)
@@ -176,16 +164,12 @@ pipeline {
                     echo "✅ Applied ${env.CHANGESETS_COUNT} changesets"
                 }
                 
-                // Archive any generated reports
-                script {
-                    if (params.DATABASE_TYPE == 'mongodb') {
-                        archiveArtifacts(
-                            artifacts: '**/Update-report-*.html',
-                            allowEmptyArchive: true,
-                            fingerprint: true
-                        )
-                    }
-                }
+                // Archive MongoDB Pro reports
+                archiveArtifacts(
+                    artifacts: '**/Update-report-*.html',
+                    allowEmptyArchive: true,
+                    fingerprint: true
+                )
             }
         }
 
@@ -194,17 +178,20 @@ pipeline {
                 expression { params.ACTION == 'rollback' }
             }
             steps {
-                echo "⏪ Rolling back ${params.ROLLBACK_COUNT} changeset(s) for ${params.DATABASE_TYPE}"
+                echo "⏪ Rolling back ${params.ROLLBACK_COUNT} changeset(s) for MongoDB"
                 
                 script {
                     // Preview rollback first
                     def rollbackSQLCommand = buildLiquibaseCommand('rollbackSQL')
                     echo "🔍 Preview of rollback operations:"
-                    sh rollbackSQLCommand
+                    echo "🔧 Executing command: ${rollbackSQLCommand}"
+                    
+                    def rollbackPreview = sh(script: rollbackSQLCommand, returnStdout: true)
+                    echo "📄 Rollback preview:\n${rollbackPreview}"
                     
                     // Confirm rollback
                     def userInput = input(
-                        message: "Are you sure you want to rollback ${params.ROLLBACK_COUNT} changeset(s)?",
+                        message: "Are you sure you want to rollback ${params.ROLLBACK_COUNT} changeset(s) for MongoDB?",
                         parameters: [
                             choice(choices: 'No\nYes', description: 'Confirm rollback', name: 'CONFIRM_ROLLBACK')
                         ]
@@ -212,7 +199,9 @@ pipeline {
                     
                     if (userInput == 'Yes') {
                         def rollbackCommand = buildLiquibaseCommand('rollback')
+                        echo "🔧 Executing command: ${rollbackCommand}"
                         def rollbackOutput = sh(script: rollbackCommand, returnStdout: true)
+                        echo "📄 Rollback output:\n${rollbackOutput}"
                         
                         env.CHANGESETS_COUNT = params.ROLLBACK_COUNT
                         env.DEPLOYMENT_STATUS = "Rollback Success"
@@ -225,11 +214,45 @@ pipeline {
             }
         }
 
+        stage('Verify MongoDB Changes') {
+            when {
+                expression { params.ACTION == 'update' }
+            }
+            steps {
+                echo "✅ Verifying MongoDB deployment"
+                
+                sh '''
+                    echo "🔍 Checking MongoDB collections and changelog history:"
+                    
+                    # Use mongosh to verify the deployment
+                    mongosh "${DB_URL}" --username "${DB_USERNAME}" --password "${DB_PASSWORD}" --eval "
+                        print('=== Database Collections ===');
+                        db.adminCommand('listCollections').cursor.firstBatch.forEach(
+                            function(collection) {
+                                print('📁 Collection: ' + collection.name);
+                            }
+                        );
+                        
+                        print('\\n=== Recent Changelog Entries ===');
+                        if (db.DATABASECHANGELOG.countDocuments() > 0) {
+                            db.DATABASECHANGELOG.find().sort({orderExecuted: -1}).limit(5).forEach(
+                                function(entry) {
+                                    print('🔄 ID: ' + entry.id + ', Author: ' + entry.author + ', Date: ' + entry.dateExecuted);
+                                }
+                            );
+                        } else {
+                            print('No changelog entries found');
+                        }
+                    " || echo "⚠️ MongoDB verification completed with warnings"
+                '''
+            }
+        }
+
         stage('Summary') {
             steps {
                 script {
-                    echo "📋 === DEPLOYMENT SUMMARY ==="
-                    echo "🗄️ Database Type: ${params.DATABASE_TYPE}"
+                    echo "📋 === MONGODB DEPLOYMENT SUMMARY ==="
+                    echo "🗄️ Database Type: MongoDB"
                     echo "🎯 Action: ${params.ACTION}"
                     echo "📁 Changelog: ${params.CHANGELOG_PATH}"
                     echo "📊 Changesets: ${env.CHANGESETS_COUNT}"
@@ -238,6 +261,7 @@ pipeline {
                     
                     def fileName = params.CHANGELOG_PATH.split('/').last()
                     echo "📄 File: ${fileName}"
+                    echo "🔗 Build: #${env.BUILD_NUMBER}"
                 }
             }
         }
@@ -263,11 +287,11 @@ pipeline {
                 def fileName = params.CHANGELOG_PATH.split('/').last()
                 
                 echo """
-                🎉 === SUCCESS SUMMARY ===
+                🎉 === MONGODB SUCCESS SUMMARY ===
                 📄 File Name: ${fileName}
                 📊 Changesets: ${env.CHANGESETS_COUNT}
                 🎯 Action: ${params.ACTION}
-                🗄️ Database: ${params.DATABASE_TYPE}
+                🗄️ Database: MongoDB
                 ✅ Status: ${env.DEPLOYMENT_STATUS}
                 🔗 Build: #${env.BUILD_NUMBER}
                 ⏰ Time: ${new Date()}
@@ -283,11 +307,11 @@ pipeline {
                 def fileName = params.CHANGELOG_PATH.split('/').last()
                 
                 echo """
-                ❌ === FAILURE SUMMARY ===
+                ❌ === MONGODB FAILURE SUMMARY ===
                 📄 File Name: ${fileName}
                 📊 Changesets: ${env.CHANGESETS_COUNT}
                 🎯 Action: ${params.ACTION}
-                🗄️ Database: ${params.DATABASE_TYPE}
+                🗄️ Database: MongoDB
                 ❌ Status: ${env.DEPLOYMENT_STATUS}
                 🔗 Build: #${env.BUILD_NUMBER}
                 ⏰ Time: ${new Date()}
@@ -295,12 +319,13 @@ pipeline {
                 
                 // Debug information
                 echo "=== DEBUG INFORMATION ==="
-                echo "Database Type: ${params.DATABASE_TYPE}"
                 echo "Changelog Path: ${params.CHANGELOG_PATH}"
                 echo "Action: ${params.ACTION}"
                 if (params.ACTION == 'rollback') {
                     echo "Rollback Count: ${params.ROLLBACK_COUNT}"
                 }
+                echo "MongoDB URL: ${env.DB_URL}"
+                echo "Username: ${env.DB_USERNAME}"
             }
         }
     }
@@ -310,22 +335,13 @@ pipeline {
 def buildLiquibaseCommand(action) {
     def baseCommand = "mvn liquibase:${action}"
     
-    // Add common parameters
+    // Add changelog file parameter
     def command = "${baseCommand} -Dliquibase.changeLogFile=${params.CHANGELOG_PATH}"
     
-    // Add database-specific parameters
-    if (env.DB_URL) {
-        command += " -Dliquibase.url='${env.DB_URL}'"
-    }
-    if (env.DB_USERNAME) {
-        command += " -Dliquibase.username='${env.DB_USERNAME}'"
-    }
-    if (env.DB_PASSWORD) {
-        command += " -Dliquibase.password='${env.DB_PASSWORD}'"
-    }
-    if (env.DB_DRIVER && env.DB_DRIVER != "") {
-        command += " -Dliquibase.driver='${env.DB_DRIVER}'"
-    }
+    // Add MongoDB connection parameters
+    command += " -Dliquibase.url='${env.DB_URL}'"
+    command += " -Dliquibase.username='${env.DB_USERNAME}'"
+    command += " -Dliquibase.password='${env.DB_PASSWORD}'"
     
     // Add action-specific parameters
     switch(action) {
@@ -341,16 +357,19 @@ def buildLiquibaseCommand(action) {
 // Helper function to extract changeset count from status output
 def extractChangesetCount(output) {
     try {
-        // Look for patterns like "X changesets have not been applied"
         def matcher = output =~ /(\d+)\s+changeset[s]?\s+(?:have\s+not\s+been\s+applied|to\s+be\s+applied)/
         if (matcher) {
             return matcher[0][1]
         }
         
-        // Alternative pattern for different Liquibase versions
         matcher = output =~ /(\d+)\s+change\s+sets/
         if (matcher) {
             return matcher[0][1]
+        }
+        
+        // Check for "0 changesets" or "no changesets"
+        if (output.contains("0 changesets") || output.contains("no changesets")) {
+            return "0"
         }
         
         return "Unknown"
@@ -363,14 +382,12 @@ def extractChangesetCount(output) {
 // Helper function to extract applied changeset count from update output
 def extractAppliedChangesetCount(output) {
     try {
-        // Look for "Run: X" in the update summary
         def matcher = output =~ /Run:\s+(\d+)/
         if (matcher) {
             return matcher[0][1]
         }
         
-        // Alternative pattern
-        matcher = output =~ /(\d+)\s+changesets?\s+(?:applied|executed)/
+        matcher = output =~ /(\d+)\s+changesets?\s+(?:applied|executed|ran successfully)/
         if (matcher) {
             return matcher[0][1]
         }
