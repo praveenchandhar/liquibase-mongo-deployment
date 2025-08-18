@@ -13,16 +13,11 @@ pipeline {
         )
     }
 
-    environment {
-        MONGO_PASSWORD = credentials('mongodb-atlas-password')
-    }
-
     stages {
         stage('Verify Environment') {
             steps {
                 echo "🔍 Verifying environment..."
-                sh 'pwd'
-                sh 'ls -la'
+                sh 'pwd && ls -la'
                 sh 'mvn --version'
             }
         }
@@ -30,7 +25,7 @@ pipeline {
         stage('List Available Versions') {
             steps {
                 echo "📁 Available MongoDB release versions:"
-                sh "ls -la db/mongo/release/ || echo 'Directory not found'"
+                sh "ls -la db/mongo/release/"
             }
         }
 
@@ -38,17 +33,6 @@ pipeline {
             steps {
                 echo "📦 Downloading Liquibase dependencies..."
                 sh 'mvn dependency:resolve'
-            }
-        }
-
-        stage('Setup MongoDB Configuration') {
-            steps {
-                echo "⚙️ Setting up MongoDB configuration..."
-                sh """
-                    cp liquibase.properties liquibase.properties.backup
-                    sed 's/PASSWORD_HERE/${MONGO_PASSWORD}/g' liquibase.properties.backup > liquibase.properties
-                    echo "MongoDB configuration updated"
-                """
             }
         }
 
@@ -61,11 +45,19 @@ pipeline {
                 """
             }
         }
+
+        stage('Show Status') {
+            steps {
+                echo "📊 Checking deployment status..."
+                sh 'mvn liquibase:status'
+            }
+        }
     }
 
     post {
         success {
             echo "✅ MongoDB deployment completed successfully!"
+            echo "Version: ${params.RELEASE_VERSION}"
         }
         failure {
             echo "❌ MongoDB deployment failed!"
