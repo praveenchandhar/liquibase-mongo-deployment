@@ -32,11 +32,11 @@
             <version>${liquibase.version}</version>
         </dependency>
 
-        <!-- Liquibase MongoDB Extension -->
+        <!-- Liquibase Commercial MongoDB Extension (Pro) -->
         <dependency>
             <groupId>org.liquibase.ext</groupId>
-            <artifactId>liquibase-mongodb</artifactId>
-            <version>4.3.7</version>
+            <artifactId>liquibase-commercial-mongodb</artifactId>
+            <version>1.6.0</version>
         </dependency>
 
         <!-- Required Connector for MongoDB -->
