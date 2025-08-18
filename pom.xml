@@ -54,11 +54,6 @@
                 <version>${liquibase.version}</version>
                 <configuration>
                     <propertyFile>liquibase.properties</propertyFile>
-                    <options>
-                        <option>--add-opens=java.naming/javax.naming.spi=ALL-UNNAMED</option>
-                        <option>--add-opens=jdk.naming.dns/com.sun.jndi.dns=ALL-UNNAMED</option>
-                        <option>--add-exports=jdk.naming.dns/com.sun.jndi.dns=ALL-UNNAMED</option>
-                    </options>
                 </configuration>
                 <dependencies>
                     <dependency>
@@ -72,18 +67,6 @@
                         <version>${liquibase.mongodb.version}</version>
                     </dependency>
                 </dependencies>
-                <executions>
-                    <execution>
-                        <configuration>
-                            <systemProperties>
-                                <property>
-                                    <name>java.naming.factory.initial</name>
-                                    <value>com.sun.jndi.dns.DnsContextFactory</value>
-                                </property>
-                            </systemProperties>
-                        </configuration>
-                    </execution>
-                </executions>
             </plugin>
         </plugins>
     </build>
