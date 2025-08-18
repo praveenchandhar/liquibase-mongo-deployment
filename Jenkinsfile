@@ -7,75 +7,44 @@ pipeline {
             choices: ['v1.0.0', 'v1.1.0'],
             description: 'Release version to deploy'
         )
-        string(
-            name: 'MONGO_PASSWORD',
-            defaultValue: '',
-            description: 'MongoDB Atlas password'
-        )
+    }
+
+    environment {
+        MONGO_PASSWORD = credentials('mongodb-atlas-password')
     }
 
     stages {
-        stage('Checkout') {
+        stage('Verify Setup') {
             steps {
-                echo "Using local repository"
-            }
-        }
-
-        stage('Verify Maven') {
-            steps {
+                sh 'pwd && ls -la'
                 sh 'mvn --version'
-                sh 'java --version'
             }
         }
 
-        stage('Download Dependencies') {
+        stage('List Available Versions') {
             steps {
-                sh 'mvn dependency:resolve'
+                sh 'echo "Available release versions:"'
+                sh 'ls -la db/mongo/release/'
             }
         }
 
-        stage('Update Connection') {
+        stage('Setup MongoDB Connection') {
             steps {
-                script {
-                    sh """
-                        cp liquibase.properties liquibase.properties.backup
-                        sed 's/PASSWORD_HERE/${params.MONGO_PASSWORD}/g' liquibase.properties.backup > liquibase.properties
-                    """
-                }
+                sh '''
+                    cp liquibase.properties liquibase.properties.backup
+                    sed "s/PASSWORD_HERE/${MONGO_PASSWORD}/g" liquibase.properties.backup > liquibase.properties
+                    echo "MongoDB connection configured"
+                '''
             }
         }
 
-        stage('Validate Setup') {
+        stage('Apply Database Changes') {
             steps {
-                sh 'mvn liquibase:validate'
+                sh '''
+                    echo "🚀 Applying MongoDB changes from version: ${RELEASE_VERSION}"
+                    mvn liquibase:update -Dliquibase.includeAll.path=db/mongo/release/${RELEASE_VERSION}/
+                '''
             }
-        }
-
-        stage('Apply Changes') {
-            steps {
-                sh """
-                    mvn liquibase:update \\
-                    -Dliquibase.includeAll.path=db/mongo/release/${params.RELEASE_VERSION}/
-                """
-            }
-        }
-
-        stage('Show Status') {
-            steps {
-                sh 'mvn liquibase:status'
-            }
-        }
-    }
-
-    post {
-        always {
-            archiveArtifacts artifacts: 'liquibase*.log', allowEmptyArchive: true
-        }
-        success {
-            echo "✅ Database deployment completed successfully!"
-        }
-        failure {
-            echo "❌ Database deployment failed!"
         }
     }
 }
