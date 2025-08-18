@@ -24,23 +24,16 @@ pipeline {
     }
 
     environment {
-        // Common settings
-        MAVEN_OPTS = "-Xmx512m"
-        
-        // MongoDB settings from your liquibase.properties
-        DB_URL = "mongodb://127.0.0.1:27017/liquibase_db?authSource=admin"
-        DB_USERNAME = "praveents"
-        DB_PASSWORD = "EkafqheY5FzPgwyK"
+        // Add mongosh to PATH
+        PATH = "/opt/homebrew/bin:/usr/local/bin:${env.PATH}"
         
         // Teams webhook URL
         TEAMS_WEBHOOK_URL = "https://sequoiaone.webhook.office.com/webhookb2/be6a7224-f57d-4807-b8a3-5bb01b290044@27d3059a-ce98-46a7-9665-afb1bb64a0d0/IncomingWebhook/79893df4ce6646d9a48390424016e927/36702cd9-0cd7-48ab-aa73-3ddd772363a6/V2CWa_m3kOcAf_YbSvaIS0zTgPdzzF1A_ZzvU8WMbSRP41"
         
-        // Add mongosh to PATH
-        PATH = "/opt/homebrew/bin:/usr/local/bin:${env.PATH}"
-        
-        // Changeset tracking
-        CHANGESETS_COUNT = "0"
-        DEPLOYMENT_STATUS = "Unknown"
+        // Jenkins build info for HTML report links
+        BUILD_URL = "${env.BUILD_URL}"
+        JOB_NAME = "${env.JOB_NAME}"
+        BUILD_NUMBER = "${env.BUILD_NUMBER}"
     }
 
     stages {
@@ -52,20 +45,10 @@ pipeline {
                     echo "Action: ${params.ACTION}"
                     echo "Changelog Path: ${params.CHANGELOG_PATH}"
                     
-                    if (params.ACTION == 'rollback') {
-                        echo "Rollback Count: ${params.ROLLBACK_COUNT}"
-                        
-                        try {
-                            def count = Integer.parseInt(params.ROLLBACK_COUNT)
-                            if (count <= 0) {
-                                error("❌ Rollback count must be a positive number")
-                            }
-                            echo "✅ Rollback count validated: ${count}"
-                        } catch (NumberFormatException e) {
-                            error("❌ Rollback count must be a valid number")
-                        }
-                    } else {
+                    if (params.ACTION != 'rollback') {
                         echo "ℹ️ Rollback count parameter ignored (not applicable for ${params.ACTION})"
+                    } else {
+                        echo "🔄 Rollback count: ${params.ROLLBACK_COUNT}"
                     }
                 }
             }
@@ -74,170 +57,150 @@ pipeline {
         stage('Check Prerequisites') {
             steps {
                 echo "🔍 Checking prerequisites for MongoDB deployment..."
-                
                 sh '''
                     echo "🔧 Java version:"
                     java -version
-                    
                     echo "🔧 Maven version:"
                     mvn --version
-                    
-                    echo "🍃 Checking mongosh availability:"
-                    if command -v mongosh >/dev/null 2>&1; then
-                        echo "✅ mongosh found:"
-                        mongosh --version
-                        which mongosh
-                    else
-                        echo "❌ mongosh not found in PATH"
-                        echo "Current PATH: $PATH"
-                        echo "Searching for mongosh..."
-                        find /usr -name "mongosh" 2>/dev/null || true
-                        find /opt -name "mongosh" 2>/dev/null || true
-                        find /Applications -name "mongosh" 2>/dev/null || true
-                    fi
-                    
-                    echo "📁 Current directory:"
-                    pwd
-                    
-                    echo "📂 Project structure:"
-                    ls -la
+                    echo "🔧 MongoDB Shell version:"
+                    mongosh --version
+                    echo "📁 Liquibase properties file:"
+                    ls -la liquibase.properties
                 '''
             }
         }
 
-        stage('Verify Environment') {
+        stage('Verify Changelog File') {
             steps {
-                echo "🔍 Verifying MongoDB environment and changelog file"
-                
                 script {
-                    if (!fileExists("${params.CHANGELOG_PATH}")) {
-                        error("❌ Changelog file not found: ${params.CHANGELOG_PATH}")
-                    }
-                    
-                    echo "✅ Changelog file exists: ${params.CHANGELOG_PATH}"
-                }
-                
-                sh '''
-                    echo "📂 Changelog file details:"
-                    ls -la ${CHANGELOG_PATH}
-                    
-                    echo "📂 Changelog content preview:"
-                    head -20 ${CHANGELOG_PATH}
-                    
-                    echo "🗄️ MongoDB connection details:"
-                    echo "Database URL: ${DB_URL}"
-                    echo "Username: ${DB_USERNAME}"
-                    echo "Password: [HIDDEN]"
-                '''
-            }
-        }
-
-        stage('Liquibase Status') {
-            when {
-                anyOf {
-                    expression { params.ACTION == 'status' }
-                    expression { params.ACTION == 'update' }
-                    expression { params.ACTION == 'rollback' }
-                }
-            }
-            steps {
-                echo "📊 Checking Liquibase status for MongoDB"
-                
-                script {
-                    def statusCommand = buildLiquibaseCommand('status')
-                    echo "🔧 Executing command: ${statusCommand}"
-                    
-                    def statusOutput = sh(script: statusCommand, returnStdout: true)
-                    echo "📄 Status output:\n${statusOutput}"
-                    
-                    // Extract changeset count from status output
-                    env.CHANGESETS_COUNT = extractChangesetCount(statusOutput)
-                    echo "📊 Changesets to be applied: ${env.CHANGESETS_COUNT}"
-                }
-            }
-        }
-
-        stage('Liquibase Update') {
-            when {
-                expression { params.ACTION == 'update' }
-            }
-            steps {
-                echo "🚀 Applying changes to MongoDB database"
-                
-                script {
-                    def updateCommand = buildLiquibaseCommand('update')
-                    echo "🔧 Executing command: ${updateCommand}"
-                    
-                    def updateOutput = sh(script: updateCommand, returnStdout: true)
-                    echo "📄 Update output:\n${updateOutput}"
-                    
-                    env.CHANGESETS_COUNT = extractAppliedChangesetCount(updateOutput)
-                    env.DEPLOYMENT_STATUS = "Success"
-                    
-                    echo "✅ Applied ${env.CHANGESETS_COUNT} changesets"
-                }
-                
-                archiveArtifacts(
-                    artifacts: '**/Update-report-*.html',
-                    allowEmptyArchive: true,
-                    fingerprint: true
-                )
-            }
-        }
-
-        stage('Liquibase Rollback') {
-            when {
-                expression { params.ACTION == 'rollback' }
-            }
-            steps {
-                echo "⏪ Rolling back ${params.ROLLBACK_COUNT} changeset(s) for MongoDB"
-                
-                script {
-                    def rollbackSQLCommand = buildLiquibaseCommand('rollbackSQL')
-                    echo "🔍 Preview of rollback operations:"
-                    echo "🔧 Executing command: ${rollbackSQLCommand}"
-                    
-                    def rollbackPreview = sh(script: rollbackSQLCommand, returnStdout: true)
-                    echo "📄 Rollback preview:\n${rollbackPreview}"
-                    
-                    def userInput = input(
-                        message: "Are you sure you want to rollback ${params.ROLLBACK_COUNT} changeset(s) for MongoDB?",
-                        parameters: [
-                            choice(choices: 'No\nYes', description: 'Confirm rollback', name: 'CONFIRM_ROLLBACK')
-                        ]
-                    )
-                    
-                    if (userInput == 'Yes') {
-                        def rollbackCommand = buildLiquibaseCommand('rollback')
-                        echo "🔧 Executing command: ${rollbackCommand}"
-                        def rollbackOutput = sh(script: rollbackCommand, returnStdout: true)
-                        echo "📄 Rollback output:\n${rollbackOutput}"
-                        
-                        env.CHANGESETS_COUNT = params.ROLLBACK_COUNT
-                        env.DEPLOYMENT_STATUS = "Rollback Success"
-                        echo "✅ Rollback completed successfully"
+                    if (fileExists(params.CHANGELOG_PATH)) {
+                        echo "✅ Changelog file exists: ${params.CHANGELOG_PATH}"
+                        sh "echo '📄 Changelog content preview:' && head -20 '${params.CHANGELOG_PATH}'"
                     } else {
-                        env.DEPLOYMENT_STATUS = "Rollback Cancelled"
-                        echo "❌ Rollback cancelled by user"
+                        error "❌ Changelog file not found: ${params.CHANGELOG_PATH}"
                     }
                 }
             }
         }
 
-        stage('Summary') {
+        stage('Execute Liquibase Action') {
             steps {
                 script {
-                    echo "📋 === MONGODB DEPLOYMENT SUMMARY ==="
-                    echo "🗄️ Database Type: MongoDB"
-                    echo "🎯 Action: ${params.ACTION}"
-                    echo "📁 Changelog: ${params.CHANGELOG_PATH}"
-                    echo "📊 Changesets: ${env.CHANGESETS_COUNT}"
-                    echo "✅ Status: ${env.DEPLOYMENT_STATUS}"
-                    echo "⏰ Completed: ${new Date()}"
+                    def changesetCount = 0
+                    def reportGenerated = false
+                    def htmlReportPath = ""
                     
-                    def fileName = params.CHANGELOG_PATH.split('/').last()
-                    echo "📄 File: ${fileName}"
-                    echo "🔗 Build: #${env.BUILD_NUMBER}"
+                    // Execute the requested action
+                    if (params.ACTION == 'status') {
+                        echo "📋 Checking Liquibase status..."
+                        def statusOutput = sh(
+                            script: "mvn liquibase:status -Dliquibase.changeLogFile=${params.CHANGELOG_PATH}",
+                            returnStdout: true
+                        )
+                        echo "Status Output: ${statusOutput}"
+                        
+                        // Extract changeset count
+                        def matcher = statusOutput =~ /(\d+)\s+changesets?\s+have\s+not\s+been\s+applied/
+                        if (matcher.find()) {
+                            changesetCount = matcher[0][1] as Integer
+                        }
+                        
+                    } else if (params.ACTION == 'update') {
+                        echo "🚀 Performing Liquibase update..."
+                        
+                        // Generate HTML documentation before update
+                        echo "📊 Generating HTML documentation..."
+                        sh "mvn liquibase:dbDoc -Dliquibase.changeLogFile=${params.CHANGELOG_PATH} -Dliquibase.outputDirectory=liquibase-reports"
+                        
+                        // Perform the update
+                        def updateOutput = sh(
+                            script: "mvn liquibase:update -Dliquibase.changeLogFile=${params.CHANGELOG_PATH}",
+                            returnStdout: true
+                        )
+                        echo "Update Output: ${updateOutput}"
+                        
+                        // Extract applied changeset count
+                        def matcher = updateOutput =~ /(\d+)\s+changesets?\s+applied/
+                        if (matcher.find()) {
+                            changesetCount = matcher[0][1] as Integer
+                        }
+                        
+                        reportGenerated = true
+                        htmlReportPath = "liquibase-reports"
+                        
+                    } else if (params.ACTION == 'rollback') {
+                        echo "⏪ Performing Liquibase rollback of ${params.ROLLBACK_COUNT} changesets..."
+                        
+                        def rollbackOutput = sh(
+                            script: "mvn liquibase:rollbackCount -Dliquibase.rollbackCount=${params.ROLLBACK_COUNT} -Dliquibase.changeLogFile=${params.CHANGELOG_PATH}",
+                            returnStdout: true
+                        )
+                        echo "Rollback Output: ${rollbackOutput}"
+                        
+                        changesetCount = params.ROLLBACK_COUNT as Integer
+                    }
+                    
+                    // Store results for Teams notification
+                    env.CHANGESET_COUNT = changesetCount.toString()
+                    env.REPORT_GENERATED = reportGenerated.toString()
+                    env.HTML_REPORT_PATH = htmlReportPath
+                }
+            }
+        }
+
+        stage('Generate Additional Reports') {
+            when {
+                expression { env.REPORT_GENERATED == 'true' }
+            }
+            steps {
+                script {
+                    echo "📊 Creating additional HTML reports..."
+                    
+                    // Create timestamp for report name
+                    def timestamp = new Date().format('dd-MMM-yyyy-HHmmss')
+                    def reportName = "${params.ACTION}-report-${timestamp}.html"
+                    
+                    // Ensure reports directory exists
+                    sh "mkdir -p liquibase-reports"
+                    
+                    // Create a summary HTML report
+                    sh """
+                        cat > liquibase-reports/${reportName} << 'EOF'
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Liquibase ${params.ACTION.toUpperCase()} Report</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .header { background-color: #f0f0f0; padding: 20px; border-radius: 5px; }
+        .content { margin-top: 20px; }
+        .success { color: green; }
+        .info { color: blue; }
+        pre { background-color: #f8f8f8; padding: 10px; border-radius: 3px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Liquibase ${params.ACTION.toUpperCase()} Report</h1>
+        <p><strong>Timestamp:</strong> ${timestamp}</p>
+        <p><strong>Changelog:</strong> ${params.CHANGELOG_PATH}</p>
+        <p><strong>Action:</strong> ${params.ACTION}</p>
+        <p class="success"><strong>Changesets Processed:</strong> ${env.CHANGESET_COUNT}</p>
+    </div>
+    <div class="content">
+        <h2>Execution Summary</h2>
+        <p class="success">✅ Liquibase ${params.ACTION} completed successfully!</p>
+        <p class="info">📊 Total changesets processed: ${env.CHANGESET_COUNT}</p>
+    </div>
+</body>
+</html>
+EOF
+                    """
+                    
+                    echo "✅ Summary report generated: ${reportName}"
+                    
+                    // List all generated files
+                    sh "echo '📁 Generated reports:' && ls -la liquibase-reports/"
                 }
             }
         }
@@ -246,242 +209,69 @@ pipeline {
     post {
         always {
             script {
-                try {
-                    echo "🧹 Cleaning up temporary files"
-                    sh 'find . -name "liquibase-*.txt" -delete 2>/dev/null || true'
-                    sh 'find . -name "*.tmp" -delete 2>/dev/null || true'
-                } catch (Exception e) {
-                    echo "⚠️ Cleanup warning: ${e.getMessage()}"
+                // Archive all reports
+                if (fileExists('liquibase-reports')) {
+                    echo "📁 Archiving Liquibase reports..."
+                    archiveArtifacts artifacts: 'liquibase-reports/**/*', allowEmptyArchive: true, fingerprint: true
+                    
+                    // List archived files
+                    sh "find liquibase-reports -type f"
                 }
-            }
-        }
-        
-        success {
-            script {
-                env.DEPLOYMENT_STATUS = env.DEPLOYMENT_STATUS ?: "Success"
                 
-                def fileName = params.CHANGELOG_PATH.split('/').last()
+                // Prepare Teams notification
+                def status = currentBuild.result ?: 'SUCCESS'
+                def statusIcon = status == 'SUCCESS' ? '✅' : '❌'
+                def changelogFile = params.CHANGELOG_PATH.split('/').last()
                 
-                echo """
-                🎉 === MONGODB SUCCESS SUMMARY ===
-                📄 File Name: ${fileName}
-                📊 Changesets: ${env.CHANGESETS_COUNT}
-                🎯 Action: ${params.ACTION}
-                🗄️ Database: MongoDB
-                ✅ Status: ${env.DEPLOYMENT_STATUS}
-                🔗 Build: #${env.BUILD_NUMBER}
-                ⏰ Time: ${new Date()}
-                """
-                
-                // Send Teams success notification
-                sendTeamsNotification(true)
-            }
-        }
-        
-        failure {
-            script {
-                env.DEPLOYMENT_STATUS = "Failed"
-                env.CHANGESETS_COUNT = env.CHANGESETS_COUNT ?: "0"
-                
-                def fileName = params.CHANGELOG_PATH.split('/').last()
-                
-                echo """
-                ❌ === MONGODB FAILURE SUMMARY ===
-                📄 File Name: ${fileName}
-                📊 Changesets: ${env.CHANGESETS_COUNT}
-                🎯 Action: ${params.ACTION}
-                🗄️ Database: MongoDB
-                ❌ Status: ${env.DEPLOYMENT_STATUS}
-                🔗 Build: #${env.BUILD_NUMBER}
-                ⏰ Time: ${new Date()}
-                """
-                
-                echo "=== DEBUG INFORMATION ==="
-                echo "Changelog Path: ${params.CHANGELOG_PATH}"
-                echo "Action: ${params.ACTION}"
-                if (params.ACTION == 'rollback') {
-                    echo "Rollback Count: ${params.ROLLBACK_COUNT}"
+                // Build the HTML report URL for Jenkins artifacts
+                def htmlReportUrl = ""
+                if (env.REPORT_GENERATED == 'true') {
+                    htmlReportUrl = "${env.BUILD_URL}artifact/liquibase-reports/"
                 }
-                echo "MongoDB URL: ${env.DB_URL}"
-                echo "Username: ${env.DB_USERNAME}"
                 
-                // Send Teams failure notification
-                sendTeamsNotification(false)
-            }
-        }
-    }
-}
-
-// Helper function to build Liquibase Maven commands
-def buildLiquibaseCommand(action) {
-    def baseCommand = "mvn liquibase:${action}"
-    def command = "${baseCommand} -Dliquibase.changeLogFile=${params.CHANGELOG_PATH}"
-    command += " -Dliquibase.url='${env.DB_URL}'"
-    command += " -Dliquibase.username='${env.DB_USERNAME}'"
-    command += " -Dliquibase.password='${env.DB_PASSWORD}'"
-    
-    switch(action) {
-        case 'rollback':
-        case 'rollbackSQL':
-            command += " -Dliquibase.rollbackCount=${params.ROLLBACK_COUNT}"
-            break
-    }
-    
-    return command
-}
-
-// Helper function to extract changeset count from status output
-def extractChangesetCount(output) {
-    try {
-        // Look for pattern: "X changeset has not been applied" or "X changesets have not been applied"
-        def matcher = output =~ /(\d+)\s+changeset[s]?\s+has?\s+not\s+been\s+applied/
-        if (matcher) {
-            return matcher[0][1]
-        }
-        
-        // Alternative patterns
-        matcher = output =~ /(\d+)\s+changeset[s]?\s+(?:have\s+not\s+been\s+applied|to\s+be\s+applied)/
-        if (matcher) {
-            return matcher[0][1]
-        }
-        
-        matcher = output =~ /(\d+)\s+change\s+sets/
-        if (matcher) {
-            return matcher[0][1]
-        }
-        
-        // Check for "0 changesets" or up-to-date
-        if (output.contains("is up to date") || output.contains("0 changesets")) {
-            return "0"
-        }
-        
-        return "Unknown"
-    } catch (Exception e) {
-        echo "Warning: Could not extract changeset count from status output"
-        return "Unknown"
-    }
-}
-
-// Helper function to extract applied changeset count from update output
-def extractAppliedChangesetCount(output) {
-    try {
-        def matcher = output =~ /Run:\s+(\d+)/
-        if (matcher) {
-            return matcher[0][1]
-        }
-        
-        matcher = output =~ /(\d+)\s+changesets?\s+(?:applied|executed|ran successfully)/
-        if (matcher) {
-            return matcher[0][1]
-        }
-        
-        return env.CHANGESETS_COUNT ?: "Unknown"
-    } catch (Exception e) {
-        echo "Warning: Could not extract applied changeset count from update output"
-        return env.CHANGESETS_COUNT ?: "Unknown"
-    }
-}
-
-// Helper function to send Teams notification
-def sendTeamsNotification(isSuccess) {
-    try {
-        def fileName = params.CHANGELOG_PATH.split('/').last()
-        def emoji = isSuccess ? "✅" : "❌"
-        def status = env.DEPLOYMENT_STATUS
-        def color = isSuccess ? "Good" : "Attention"
-        
-        def message = [
-            "@type": "MessageCard",
-            "@context": "http://schema.org/extensions",
-            "themeColor": isSuccess ? "00FF00" : "FF0000",
-            "summary": "MongoDB Liquibase ${status}",
-            "sections": [
-                [
-                    "activityTitle": "${emoji} MongoDB Liquibase ${status}",
-                    "activitySubtitle": "Database deployment completed",
-                    "facts": [
+                // Create Teams message
+                def teamsMessage = [
+                    "@type": "MessageCard",
+                    "@context": "http://schema.org/extensions",
+                    "themeColor": status == 'SUCCESS' ? "00FF00" : "FF0000",
+                    "summary": "Liquibase ${params.ACTION.toUpperCase()} Report",
+                    "sections": [
                         [
-                            "name": "File Name",
-                            "value": fileName
-                        ],
-                        [
-                            "name": "Changesets",
-                            "value": env.CHANGESETS_COUNT
-                        ],
-                        [
-                            "name": "Action",
-                            "value": params.ACTION
-                        ],
-                        [
-                            "name": "Database",
-                            "value": "MongoDB"
-                        ],
-                        [
-                            "name": "Build",
-                            "value": "#${env.BUILD_NUMBER}"
-                        ],
-                        [
-                            "name": "Time",
-                            "value": new Date().toString()
-                        ]
-                    ],
-                    "markdown": true
-                ]
-            ],
-            "potentialAction": [
-                [
-                    "@type": "OpenUri",
-                    "name": "View Build",
-                    "targets": [
-                        [
-                            "os": "default",
-                            "uri": env.BUILD_URL
+                            "activityTitle": "${statusIcon} Liquibase ${params.ACTION.toUpperCase()} Report",
+                            "activitySubtitle": "MongoDB Database Deployment",
+                            "facts": [
+                                ["name": "File", "value": changelogFile],
+                                ["name": "Changesets", "value": env.CHANGESET_COUNT ?: "0"],
+                                ["name": "Action", "value": params.ACTION.toUpperCase()],
+                                ["name": "Status", "value": status]
+                            ],
+                            "markdown": true
                         ]
                     ]
                 ]
-            ]
-        ]
-        
-        // Create JSON string manually to avoid writeJSON dependency
-        def jsonString = """
-        {
-            "@type": "MessageCard",
-            "@context": "http://schema.org/extensions",
-            "themeColor": "${isSuccess ? '00FF00' : 'FF0000'}",
-            "summary": "MongoDB Liquibase ${status}",
-            "sections": [
-                {
-                    "activityTitle": "${emoji} MongoDB Liquibase ${status}",
-                    "activitySubtitle": "Database deployment completed",
-                    "facts": [
-                        {"name": "File Name", "value": "${fileName}"},
-                        {"name": "Changesets", "value": "${env.CHANGESETS_COUNT}"},
-                        {"name": "Action", "value": "${params.ACTION}"},
-                        {"name": "Database", "value": "MongoDB"},
-                        {"name": "Build", "value": "#${env.BUILD_NUMBER}"},
-                        {"name": "Time", "value": "${new Date()}"}
+                
+                // Add View Details button if HTML report was generated
+                if (htmlReportUrl) {
+                    teamsMessage.potentialAction = [
+                        [
+                            "@type": "OpenUri",
+                            "name": "View Details",
+                            "targets": [
+                                ["os": "default", "uri": htmlReportUrl]
+                            ]
+                        ]
                     ]
                 }
-            ],
-            "potentialAction": [
-                {
-                    "@type": "OpenUri",
-                    "name": "View Build",
-                    "targets": [{"os": "default", "uri": "${env.BUILD_URL}"}]
-                }
-            ]
+                
+                // Send Teams notification
+                sh """
+                    curl -H 'Content-Type: application/json' \\
+                         -d '${groovy.json.JsonBuilder(teamsMessage).toString()}' \\
+                         '${env.TEAMS_WEBHOOK_URL}'
+                """
+                
+                echo "📢 Teams notification sent with HTML report link: ${htmlReportUrl}"
+            }
         }
-        """.stripIndent()
-        
-        sh """
-            curl -X POST '${env.TEAMS_WEBHOOK_URL}' \\
-                 -H 'Content-Type: application/json' \\
-                 -d '${jsonString}'
-        """
-        
-        echo "📢 Teams notification sent successfully"
-        
-    } catch (Exception e) {
-        echo "⚠️ Failed to send Teams notification: ${e.getMessage()}"
     }
 }
