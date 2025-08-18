@@ -20,8 +20,8 @@ pipeline {
     }
 
     tools {
-        // Use Maven tool configured in Jenkins
-        maven 'Maven-3.9.0' // Change this to match your Jenkins Maven tool name
+        // Use the correct Maven tool name from your Jenkins configuration
+        maven 'Maven-3.9' // Fixed to match your Jenkins Maven tool name
     }
 
     environment {
