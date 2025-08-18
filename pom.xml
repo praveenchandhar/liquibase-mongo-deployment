@@ -1,23 +1,65 @@
-<dependencies>
-    <!-- Liquibase Core -->
-    <dependency>
-        <groupId>org.liquibase</groupId>
-        <artifactId>liquibase-core</artifactId>
-        <!-- Adjust version if needed -->
-        <version>4.33.0</version>
-    </dependency>
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    
+    <modelVersion>4.0.0</modelVersion>
+    
+    <!-- Project Information -->
+    <groupId>com.company</groupId>
+    <artifactId>liquibase-mongo-deployment</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+    
+    <name>liquibase-mongo-deployment</name>
+    <description>Liquibase MongoDB Deployment Project</description>
+    
+    <!-- Properties -->
+    <properties>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <liquibase.version>4.33.0</liquibase.version>
+    </properties>
+    
+    <!-- Dependencies -->
+    <dependencies>
+        <!-- Liquibase Core -->
+        <dependency>
+            <groupId>org.liquibase</groupId>
+            <artifactId>liquibase-core</artifactId>
+            <version>${liquibase.version}</version>
+        </dependency>
 
-    <!-- Liquibase MongoDB Extension -->
-    <dependency>
-        <groupId>org.liquibase.ext</groupId>
-        <artifactId>liquibase-mongodb</artifactId>
-        <version>4.3.7</version> <!-- This version supports MongoDB -->
-    </dependency>
+        <!-- Liquibase MongoDB Extension -->
+        <dependency>
+            <groupId>org.liquibase.ext</groupId>
+            <artifactId>liquibase-mongodb</artifactId>
+            <version>4.3.7</version>
+        </dependency>
 
-    <!-- Required Connector for MongoDB -->
-    <dependency>
-        <groupId>org.mongodb</groupId>
-        <artifactId>mongodb-driver-sync</artifactId>
-        <version>4.10.2</version> <!-- Adjust if newer version available -->
-    </dependency>
-</dependencies>
+        <!-- Required Connector for MongoDB -->
+        <dependency>
+            <groupId>org.mongodb</groupId>
+            <artifactId>mongodb-driver-sync</artifactId>
+            <version>4.10.2</version>
+        </dependency>
+    </dependencies>
+    
+    <!-- Build Configuration -->
+    <build>
+        <plugins>
+            <!-- Liquibase Maven Plugin -->
+            <plugin>
+                <groupId>org.liquibase</groupId>
+                <artifactId>liquibase-maven-plugin</artifactId>
+                <version>${liquibase.version}</version>
+                <configuration>
+                    <propertyFile>liquibase.properties</propertyFile>
+                    <promptOnNonLocalDatabase>false</promptOnNonLocalDatabase>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
