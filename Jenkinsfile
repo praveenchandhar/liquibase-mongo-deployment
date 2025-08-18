@@ -32,7 +32,10 @@ pipeline {
         DB_USERNAME = "praveents"
         DB_PASSWORD = "EkafqheY5FzPgwyK"
         
-        // Add mongosh to PATH (adjust path as needed)
+        // Teams webhook URL
+        TEAMS_WEBHOOK_URL = "https://sequoiaone.webhook.office.com/webhookb2/be6a7224-f57d-4807-b8a3-5bb01b290044@27d3059a-ce98-46a7-9665-afb1bb64a0d0/IncomingWebhook/79893df4ce6646d9a48390424016e927/36702cd9-0cd7-48ab-aa73-3ddd772363a6/V2CWa_m3kOcAf_YbSvaIS0zTgPdzzF1A_ZzvU8WMbSRP41"
+        
+        // Add mongosh to PATH
         PATH = "/opt/homebrew/bin:/usr/local/bin:${env.PATH}"
         
         // Changeset tracking
@@ -147,7 +150,7 @@ pipeline {
                     def statusOutput = sh(script: statusCommand, returnStdout: true)
                     echo "📄 Status output:\n${statusOutput}"
                     
-                    // Extract changeset count from status output (FIXED REGEX)
+                    // Extract changeset count from status output
                     env.CHANGESETS_COUNT = extractChangesetCount(statusOutput)
                     echo "📊 Changesets to be applied: ${env.CHANGESETS_COUNT}"
                 }
@@ -269,6 +272,9 @@ pipeline {
                 🔗 Build: #${env.BUILD_NUMBER}
                 ⏰ Time: ${new Date()}
                 """
+                
+                // Send Teams success notification
+                sendTeamsNotification(true)
             }
         }
         
@@ -299,13 +305,8 @@ pipeline {
                 echo "MongoDB URL: ${env.DB_URL}"
                 echo "Username: ${env.DB_USERNAME}"
                 
-                // Show mongosh status in failure
-                sh '''
-                    echo "=== MONGOSH DEBUG ==="
-                    echo "PATH: $PATH"
-                    command -v mongosh || echo "mongosh not found"
-                    ls -la /opt/homebrew/bin/mongosh 2>/dev/null || echo "mongosh not in /opt/homebrew/bin"
-                ''' 
+                // Send Teams failure notification
+                sendTeamsNotification(false)
             }
         }
     }
@@ -329,7 +330,7 @@ def buildLiquibaseCommand(action) {
     return command
 }
 
-// FIXED: Helper function to extract changeset count from status output
+// Helper function to extract changeset count from status output
 def extractChangesetCount(output) {
     try {
         // Look for pattern: "X changeset has not been applied" or "X changesets have not been applied"
@@ -378,5 +379,109 @@ def extractAppliedChangesetCount(output) {
     } catch (Exception e) {
         echo "Warning: Could not extract applied changeset count from update output"
         return env.CHANGESETS_COUNT ?: "Unknown"
+    }
+}
+
+// Helper function to send Teams notification
+def sendTeamsNotification(isSuccess) {
+    try {
+        def fileName = params.CHANGELOG_PATH.split('/').last()
+        def emoji = isSuccess ? "✅" : "❌"
+        def status = env.DEPLOYMENT_STATUS
+        def color = isSuccess ? "Good" : "Attention"
+        
+        def message = [
+            "@type": "MessageCard",
+            "@context": "http://schema.org/extensions",
+            "themeColor": isSuccess ? "00FF00" : "FF0000",
+            "summary": "MongoDB Liquibase ${status}",
+            "sections": [
+                [
+                    "activityTitle": "${emoji} MongoDB Liquibase ${status}",
+                    "activitySubtitle": "Database deployment completed",
+                    "facts": [
+                        [
+                            "name": "File Name",
+                            "value": fileName
+                        ],
+                        [
+                            "name": "Changesets",
+                            "value": env.CHANGESETS_COUNT
+                        ],
+                        [
+                            "name": "Action",
+                            "value": params.ACTION
+                        ],
+                        [
+                            "name": "Database",
+                            "value": "MongoDB"
+                        ],
+                        [
+                            "name": "Build",
+                            "value": "#${env.BUILD_NUMBER}"
+                        ],
+                        [
+                            "name": "Time",
+                            "value": new Date().toString()
+                        ]
+                    ],
+                    "markdown": true
+                ]
+            ],
+            "potentialAction": [
+                [
+                    "@type": "OpenUri",
+                    "name": "View Build",
+                    "targets": [
+                        [
+                            "os": "default",
+                            "uri": env.BUILD_URL
+                        ]
+                    ]
+                ]
+            ]
+        ]
+        
+        // Create JSON string manually to avoid writeJSON dependency
+        def jsonString = """
+        {
+            "@type": "MessageCard",
+            "@context": "http://schema.org/extensions",
+            "themeColor": "${isSuccess ? '00FF00' : 'FF0000'}",
+            "summary": "MongoDB Liquibase ${status}",
+            "sections": [
+                {
+                    "activityTitle": "${emoji} MongoDB Liquibase ${status}",
+                    "activitySubtitle": "Database deployment completed",
+                    "facts": [
+                        {"name": "File Name", "value": "${fileName}"},
+                        {"name": "Changesets", "value": "${env.CHANGESETS_COUNT}"},
+                        {"name": "Action", "value": "${params.ACTION}"},
+                        {"name": "Database", "value": "MongoDB"},
+                        {"name": "Build", "value": "#${env.BUILD_NUMBER}"},
+                        {"name": "Time", "value": "${new Date()}"}
+                    ]
+                }
+            ],
+            "potentialAction": [
+                {
+                    "@type": "OpenUri",
+                    "name": "View Build",
+                    "targets": [{"os": "default", "uri": "${env.BUILD_URL}"}]
+                }
+            ]
+        }
+        """.stripIndent()
+        
+        sh """
+            curl -X POST '${env.TEAMS_WEBHOOK_URL}' \\
+                 -H 'Content-Type: application/json' \\
+                 -d '${jsonString}'
+        """
+        
+        echo "📢 Teams notification sent successfully"
+        
+    } catch (Exception e) {
+        echo "⚠️ Failed to send Teams notification: ${e.getMessage()}"
     }
 }
