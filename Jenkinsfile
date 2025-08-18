@@ -20,19 +20,13 @@ pipeline {
         string(
             name: 'ROLLBACK_COUNT',
             defaultValue: '1',
-            description: 'Number of changesets to rollback (only for rollback action)'
-        )
-        string(
-            name: 'TEAMS_WEBHOOK_URL',
-            defaultValue: 'https://sequoiaone.webhook.office.com/webhookb2/be6a7224-f57d-4807-b8a3-5bb01b290044@27d3059a-ce98-46a7-9665-afb1bb64a0d0/IncomingWebhook/79893df4ce6646d9a48390424016e927/36702cd9-0cd7-48ab-aa73-3ddd772363a6/V2CWa_m3kOcAf_YbSvaIS0zTgPdzzF1A_ZzvU8WMbSRP41',
-            description: 'Teams webhook URL for notifications'
+            description: 'Number of changesets to rollback (ONLY used when ACTION = rollback)'
         )
     }
 
     environment {
         // Common settings
         MAVEN_OPTS = "-Xmx512m"
-        LIQUIBASE_LICENSE_KEY = credentials('liquibase-pro-license')
         
         // Database-specific settings will be set dynamically
         DB_URL = ""
@@ -46,6 +40,34 @@ pipeline {
     }
 
     stages {
+        stage('Validate Parameters') {
+            steps {
+                script {
+                    echo "🔍 Validating parameters..."
+                    echo "Database Type: ${params.DATABASE_TYPE}"
+                    echo "Action: ${params.ACTION}"
+                    echo "Changelog Path: ${params.CHANGELOG_PATH}"
+                    
+                    if (params.ACTION == 'rollback') {
+                        echo "Rollback Count: ${params.ROLLBACK_COUNT}"
+                        
+                        // Validate rollback count
+                        try {
+                            def count = Integer.parseInt(params.ROLLBACK_COUNT)
+                            if (count <= 0) {
+                                error("❌ Rollback count must be a positive number")
+                            }
+                            echo "✅ Rollback count validated: ${count}"
+                        } catch (NumberFormatException e) {
+                            error("❌ Rollback count must be a valid number")
+                        }
+                    } else {
+                        echo "ℹ️ Rollback count parameter ignored (not applicable for ${params.ACTION})"
+                    }
+                }
+            }
+        }
+
         stage('Setup Database Configuration') {
             steps {
                 script {
@@ -202,24 +224,54 @@ pipeline {
                 }
             }
         }
+
+        stage('Summary') {
+            steps {
+                script {
+                    echo "📋 === DEPLOYMENT SUMMARY ==="
+                    echo "🗄️ Database Type: ${params.DATABASE_TYPE}"
+                    echo "🎯 Action: ${params.ACTION}"
+                    echo "📁 Changelog: ${params.CHANGELOG_PATH}"
+                    echo "📊 Changesets: ${env.CHANGESETS_COUNT}"
+                    echo "✅ Status: ${env.DEPLOYMENT_STATUS}"
+                    echo "⏰ Completed: ${new Date()}"
+                    
+                    def fileName = params.CHANGELOG_PATH.split('/').last()
+                    echo "📄 File: ${fileName}"
+                }
+            }
+        }
     }
 
     post {
         always {
-            echo "🧹 Cleaning up temporary files"
-            sh 'find . -name "liquibase-*.txt" -delete || true'
-            sh 'find . -name "*.tmp" -delete || true'
+            script {
+                try {
+                    echo "🧹 Cleaning up temporary files"
+                    sh 'find . -name "liquibase-*.txt" -delete 2>/dev/null || true'
+                    sh 'find . -name "*.tmp" -delete 2>/dev/null || true'
+                } catch (Exception e) {
+                    echo "⚠️ Cleanup warning: ${e.getMessage()}"
+                }
+            }
         }
         
         success {
             script {
                 env.DEPLOYMENT_STATUS = env.DEPLOYMENT_STATUS ?: "Success"
                 
-                echo "✅ Deployment completed successfully!"
-                echo "📊 Final changeset count: ${env.CHANGESETS_COUNT}"
+                def fileName = params.CHANGELOG_PATH.split('/').last()
                 
-                // Send Teams notification
-                sendTeamsNotification(true)
+                echo """
+                🎉 === SUCCESS SUMMARY ===
+                📄 File Name: ${fileName}
+                📊 Changesets: ${env.CHANGESETS_COUNT}
+                🎯 Action: ${params.ACTION}
+                🗄️ Database: ${params.DATABASE_TYPE}
+                ✅ Status: ${env.DEPLOYMENT_STATUS}
+                🔗 Build: #${env.BUILD_NUMBER}
+                ⏰ Time: ${new Date()}
+                """
             }
         }
         
@@ -228,10 +280,27 @@ pipeline {
                 env.DEPLOYMENT_STATUS = "Failed"
                 env.CHANGESETS_COUNT = env.CHANGESETS_COUNT ?: "0"
                 
-                echo "❌ Deployment failed!"
+                def fileName = params.CHANGELOG_PATH.split('/').last()
                 
-                // Send Teams notification
-                sendTeamsNotification(false)
+                echo """
+                ❌ === FAILURE SUMMARY ===
+                📄 File Name: ${fileName}
+                📊 Changesets: ${env.CHANGESETS_COUNT}
+                🎯 Action: ${params.ACTION}
+                🗄️ Database: ${params.DATABASE_TYPE}
+                ❌ Status: ${env.DEPLOYMENT_STATUS}
+                🔗 Build: #${env.BUILD_NUMBER}
+                ⏰ Time: ${new Date()}
+                """
+                
+                // Debug information
+                echo "=== DEBUG INFORMATION ==="
+                echo "Database Type: ${params.DATABASE_TYPE}"
+                echo "Changelog Path: ${params.CHANGELOG_PATH}"
+                echo "Action: ${params.ACTION}"
+                if (params.ACTION == 'rollback') {
+                    echo "Rollback Count: ${params.ROLLBACK_COUNT}"
+                }
             }
         }
     }
@@ -256,9 +325,6 @@ def buildLiquibaseCommand(action) {
     }
     if (env.DB_DRIVER && env.DB_DRIVER != "") {
         command += " -Dliquibase.driver='${env.DB_DRIVER}'"
-    }
-    if (env.LIQUIBASE_LICENSE_KEY) {
-        command += " -Dliquibase.licenseKey='${env.LIQUIBASE_LICENSE_KEY}'"
     }
     
     // Add action-specific parameters
@@ -313,76 +379,5 @@ def extractAppliedChangesetCount(output) {
     } catch (Exception e) {
         echo "Warning: Could not extract applied changeset count from update output"
         return env.CHANGESETS_COUNT ?: "Unknown"
-    }
-}
-
-// Helper function to send Teams notification
-def sendTeamsNotification(isSuccess) {
-    try {
-        def fileName = params.CHANGELOG_PATH.split('/').last()
-        def color = isSuccess ? "Good" : "Attention"
-        def emoji = isSuccess ? "✅" : "❌"
-        def status = env.DEPLOYMENT_STATUS
-        
-        def message = [
-            "@type": "MessageCard",
-            "@context": "http://schema.org/extensions",
-            "themeColor": isSuccess ? "00FF00" : "FF0000",
-            "summary": "Liquibase Deployment ${status}",
-            "sections": [
-                [
-                    "activityTitle": "${emoji} Liquibase Deployment ${status}",
-                    "activitySubtitle": "Database: ${params.DATABASE_TYPE}",
-                    "facts": [
-                        [
-                            "name": "File Name",
-                            "value": fileName
-                        ],
-                        [
-                            "name": "Changesets",
-                            "value": env.CHANGESETS_COUNT
-                        ],
-                        [
-                            "name": "Action",
-                            "value": params.ACTION
-                        ],
-                        [
-                            "name": "Database",
-                            "value": params.DATABASE_TYPE
-                        ],
-                        [
-                            "name": "Build",
-                            "value": "#${env.BUILD_NUMBER}"
-                        ]
-                    ],
-                    "markdown": true
-                ]
-            ],
-            "potentialAction": [
-                [
-                    "@type": "OpenUri",
-                    "name": "View Build",
-                    "targets": [
-                        [
-                            "os": "default",
-                            "uri": env.BUILD_URL
-                        ]
-                    ]
-                ]
-            ]
-        ]
-        
-        def jsonPayload = writeJSON returnText: true, json: message
-        
-        sh """
-            curl -X POST '${params.TEAMS_WEBHOOK_URL}' \\
-                 -H 'Content-Type: application/json' \\
-                 -d '${jsonPayload}'
-        """
-        
-        echo "📢 Teams notification sent successfully"
-        
-    } catch (Exception e) {
-        echo "⚠️ Failed to send Teams notification: ${e.getMessage()}"
     }
 }
