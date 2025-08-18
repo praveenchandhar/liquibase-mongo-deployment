@@ -89,6 +89,7 @@ pipeline {
                     def changesetCount = 0
                     def reportGenerated = false
                     def htmlReportPath = ""
+                    def statusMessage = ""
                     
                     // Execute the requested action
                     if (params.ACTION == 'status') {
@@ -99,10 +100,18 @@ pipeline {
                         )
                         echo "Status Output: ${statusOutput}"
                         
-                        // Extract changeset count
-                        def matcher = statusOutput =~ /(\d+)\s+changesets?\s+have\s+not\s+been\s+applied/
-                        if (matcher.find()) {
-                            changesetCount = matcher[0][1] as Integer
+                        // Extract changeset count - handle multiple patterns
+                        if (statusOutput.contains("is up to date")) {
+                            changesetCount = 0
+                            statusMessage = "Database is up to date"
+                        } else {
+                            def matcher = statusOutput =~ /(\d+)\s+changesets?\s+have\s+not\s+been\s+applied/
+                            if (matcher.find()) {
+                                changesetCount = matcher[0][1] as Integer
+                                statusMessage = "${changesetCount} changesets pending"
+                            } else {
+                                statusMessage = "Status checked"
+                            }
                         }
                         
                     } else if (params.ACTION == 'update') {
@@ -120,9 +129,17 @@ pipeline {
                         echo "Update Output: ${updateOutput}"
                         
                         // Extract applied changeset count
-                        def matcher = updateOutput =~ /(\d+)\s+changesets?\s+applied/
-                        if (matcher.find()) {
-                            changesetCount = matcher[0][1] as Integer
+                        if (updateOutput.contains("is up to date")) {
+                            changesetCount = 0
+                            statusMessage = "No changes to apply"
+                        } else {
+                            def matcher = updateOutput =~ /(\d+)\s+changesets?\s+applied/
+                            if (matcher.find()) {
+                                changesetCount = matcher[0][1] as Integer
+                                statusMessage = "${changesetCount} changesets applied"
+                            } else {
+                                statusMessage = "Update completed"
+                            }
                         }
                         
                         reportGenerated = true
@@ -138,10 +155,12 @@ pipeline {
                         echo "Rollback Output: ${rollbackOutput}"
                         
                         changesetCount = params.ROLLBACK_COUNT as Integer
+                        statusMessage = "${changesetCount} changesets rolled back"
                     }
                     
                     // Store results for Teams notification
                     env.CHANGESET_COUNT = changesetCount.toString()
+                    env.STATUS_MESSAGE = statusMessage
                     env.REPORT_GENERATED = reportGenerated.toString()
                     env.HTML_REPORT_PATH = htmlReportPath
                 }
@@ -185,12 +204,12 @@ pipeline {
         <p><strong>Timestamp:</strong> ${timestamp}</p>
         <p><strong>Changelog:</strong> ${params.CHANGELOG_PATH}</p>
         <p><strong>Action:</strong> ${params.ACTION}</p>
-        <p class="success"><strong>Changesets Processed:</strong> ${env.CHANGESET_COUNT}</p>
+        <p class="success"><strong>Status:</strong> ${env.STATUS_MESSAGE}</p>
     </div>
     <div class="content">
         <h2>Execution Summary</h2>
         <p class="success">✅ Liquibase ${params.ACTION} completed successfully!</p>
-        <p class="info">📊 Total changesets processed: ${env.CHANGESET_COUNT}</p>
+        <p class="info">📊 ${env.STATUS_MESSAGE}</p>
     </div>
 </body>
 </html>
@@ -229,48 +248,49 @@ EOF
                     htmlReportUrl = "${env.BUILD_URL}artifact/liquibase-reports/"
                 }
                 
-                // Create Teams message
-                def teamsMessage = [
-                    "@type": "MessageCard",
-                    "@context": "http://schema.org/extensions",
-                    "themeColor": status == 'SUCCESS' ? "00FF00" : "FF0000",
-                    "summary": "Liquibase ${params.ACTION.toUpperCase()} Report",
-                    "sections": [
-                        [
-                            "activityTitle": "${statusIcon} Liquibase ${params.ACTION.toUpperCase()} Report",
-                            "activitySubtitle": "MongoDB Database Deployment",
-                            "facts": [
-                                ["name": "File", "value": changelogFile],
-                                ["name": "Changesets", "value": env.CHANGESET_COUNT ?: "0"],
-                                ["name": "Action", "value": params.ACTION.toUpperCase()],
-                                ["name": "Status", "value": status]
-                            ],
-                            "markdown": true
-                        ]
-                    ]
-                ]
-                
-                // Add View Details button if HTML report was generated
-                if (htmlReportUrl) {
-                    teamsMessage.potentialAction = [
-                        [
-                            "@type": "OpenUri",
-                            "name": "View Details",
-                            "targets": [
-                                ["os": "default", "uri": htmlReportUrl]
-                            ]
-                        ]
-                    ]
-                }
+                // Create Teams message using simple string concatenation
+                def teamsPayload = """
+{
+    "@type": "MessageCard",
+    "@context": "http://schema.org/extensions",
+    "themeColor": "${status == 'SUCCESS' ? '00FF00' : 'FF0000'}",
+    "summary": "Liquibase ${params.ACTION.toUpperCase()} Report",
+    "sections": [
+        {
+            "activityTitle": "${statusIcon} Liquibase ${params.ACTION.toUpperCase()} Report",
+            "activitySubtitle": "MongoDB Database Deployment",
+            "facts": [
+                {"name": "File", "value": "${changelogFile}"},
+                {"name": "Status", "value": "${env.STATUS_MESSAGE ?: 'Completed'}"},
+                {"name": "Action", "value": "${params.ACTION.toUpperCase()}"},
+                {"name": "Build", "value": "#${env.BUILD_NUMBER}"}
+            ],
+            "markdown": true
+        }
+    ]${htmlReportUrl ? """,
+    "potentialAction": [
+        {
+            "@type": "OpenUri",
+            "name": "View Details",
+            "targets": [
+                {"os": "default", "uri": "${htmlReportUrl}"}
+            ]
+        }
+    ]""" : ""}
+}
+                """.replaceAll(/\s+/, ' ').trim()
                 
                 // Send Teams notification
                 sh """
                     curl -H 'Content-Type: application/json' \\
-                         -d '${groovy.json.JsonBuilder(teamsMessage).toString()}' \\
+                         -d '${teamsPayload}' \\
                          '${env.TEAMS_WEBHOOK_URL}'
                 """
                 
-                echo "📢 Teams notification sent with HTML report link: ${htmlReportUrl}"
+                echo "📢 Teams notification sent!"
+                if (htmlReportUrl) {
+                    echo "🔗 HTML report link: ${htmlReportUrl}"
+                }
             }
         }
     }
