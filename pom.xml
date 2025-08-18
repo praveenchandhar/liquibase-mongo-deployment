@@ -32,19 +32,14 @@
             <version>${liquibase.version}</version>
         </dependency>
 
-        <!-- Liquibase Commercial MongoDB Extension (Pro) -->
+        <!-- Liquibase Commercial MongoDB Extension (Pro) - includes MongoDB drivers -->
         <dependency>
             <groupId>org.liquibase.ext</groupId>
             <artifactId>liquibase-commercial-mongodb</artifactId>
             <version>1.6.0</version>
         </dependency>
 
-        <!-- Required Connector for MongoDB -->
-        <dependency>
-            <groupId>org.mongodb</groupId>
-            <artifactId>mongodb-driver-sync</artifactId>
-            <version>4.10.2</version>
-        </dependency>
+        <!-- MongoDB driver removed - included in commercial extension -->
     </dependencies>
     
     <!-- Build Configuration -->
