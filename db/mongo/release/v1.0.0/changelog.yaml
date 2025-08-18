@@ -4,8 +4,10 @@ databaseChangeLog:
       author: "praveen"
       comment: "Setup users collection and indexes"
       changes:
-        - runCommand:
-            command: |
-              {
-                eval: "load('db/mongo/release/v1.0.0/users-setup.js')"
-              }
+        - runScript:
+            path: db/mongo/release/v1.0.0/users-setup.js
+            relativeToChangelogFile: false
+      rollback:
+        - runScript:
+            path: db/mongo/release/v1.0.0/users-setup.rollback.js
+            relativeToChangelogFile: false
