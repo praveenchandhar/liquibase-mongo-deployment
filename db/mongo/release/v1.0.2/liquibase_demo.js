@@ -1,5 +1,5 @@
-
-use new_liquibasedb;
+// liquibase formatted mongodb
+// changeset praveen:v1.0.2 runWith:mongosh
 
 // 1. Insert sample data into sk_uam_permission collection
 db.getCollection("sk_uam_permission").insertMany([
