@@ -1,0 +1,4 @@
+databaseChangeLog:
+  - include:
+      file: liquibase_demo.js
+      relativeToChangelogFile: true
