@@ -20,8 +20,7 @@ pipeline {
     }
 
     tools {
-        // Use the correct Maven tool name from your Jenkins configuration
-        maven 'Maven-3.9' // Fixed to match your Jenkins Maven tool name
+        maven 'Maven-3.9'
     }
 
     environment {
@@ -32,6 +31,9 @@ pipeline {
         DB_URL = "mongodb://127.0.0.1:27017/liquibase_db?authSource=admin"
         DB_USERNAME = "praveents"
         DB_PASSWORD = "EkafqheY5FzPgwyK"
+        
+        // Add mongosh to PATH (adjust path as needed)
+        PATH = "/opt/homebrew/bin:/usr/local/bin:${env.PATH}"
         
         // Changeset tracking
         CHANGESETS_COUNT = "0"
@@ -50,7 +52,6 @@ pipeline {
                     if (params.ACTION == 'rollback') {
                         echo "Rollback Count: ${params.ROLLBACK_COUNT}"
                         
-                        // Validate rollback count
                         try {
                             def count = Integer.parseInt(params.ROLLBACK_COUNT)
                             if (count <= 0) {
@@ -78,14 +79,25 @@ pipeline {
                     echo "🔧 Maven version:"
                     mvn --version
                     
+                    echo "🍃 Checking mongosh availability:"
+                    if command -v mongosh >/dev/null 2>&1; then
+                        echo "✅ mongosh found:"
+                        mongosh --version
+                        which mongosh
+                    else
+                        echo "❌ mongosh not found in PATH"
+                        echo "Current PATH: $PATH"
+                        echo "Searching for mongosh..."
+                        find /usr -name "mongosh" 2>/dev/null || true
+                        find /opt -name "mongosh" 2>/dev/null || true
+                        find /Applications -name "mongosh" 2>/dev/null || true
+                    fi
+                    
                     echo "📁 Current directory:"
                     pwd
                     
                     echo "📂 Project structure:"
                     ls -la
-                    
-                    echo "📋 Liquibase properties file:"
-                    ls -la liquibase.properties
                 '''
             }
         }
@@ -95,7 +107,6 @@ pipeline {
                 echo "🔍 Verifying MongoDB environment and changelog file"
                 
                 script {
-                    // Check if changelog file exists
                     if (!fileExists("${params.CHANGELOG_PATH}")) {
                         error("❌ Changelog file not found: ${params.CHANGELOG_PATH}")
                     }
@@ -136,7 +147,7 @@ pipeline {
                     def statusOutput = sh(script: statusCommand, returnStdout: true)
                     echo "📄 Status output:\n${statusOutput}"
                     
-                    // Extract changeset count from status output
+                    // Extract changeset count from status output (FIXED REGEX)
                     env.CHANGESETS_COUNT = extractChangesetCount(statusOutput)
                     echo "📊 Changesets to be applied: ${env.CHANGESETS_COUNT}"
                 }
@@ -157,14 +168,12 @@ pipeline {
                     def updateOutput = sh(script: updateCommand, returnStdout: true)
                     echo "📄 Update output:\n${updateOutput}"
                     
-                    // Extract actual changesets applied from update output
                     env.CHANGESETS_COUNT = extractAppliedChangesetCount(updateOutput)
                     env.DEPLOYMENT_STATUS = "Success"
                     
                     echo "✅ Applied ${env.CHANGESETS_COUNT} changesets"
                 }
                 
-                // Archive MongoDB Pro reports
                 archiveArtifacts(
                     artifacts: '**/Update-report-*.html',
                     allowEmptyArchive: true,
@@ -181,7 +190,6 @@ pipeline {
                 echo "⏪ Rolling back ${params.ROLLBACK_COUNT} changeset(s) for MongoDB"
                 
                 script {
-                    // Preview rollback first
                     def rollbackSQLCommand = buildLiquibaseCommand('rollbackSQL')
                     echo "🔍 Preview of rollback operations:"
                     echo "🔧 Executing command: ${rollbackSQLCommand}"
@@ -189,7 +197,6 @@ pipeline {
                     def rollbackPreview = sh(script: rollbackSQLCommand, returnStdout: true)
                     echo "📄 Rollback preview:\n${rollbackPreview}"
                     
-                    // Confirm rollback
                     def userInput = input(
                         message: "Are you sure you want to rollback ${params.ROLLBACK_COUNT} changeset(s) for MongoDB?",
                         parameters: [
@@ -211,40 +218,6 @@ pipeline {
                         echo "❌ Rollback cancelled by user"
                     }
                 }
-            }
-        }
-
-        stage('Verify MongoDB Changes') {
-            when {
-                expression { params.ACTION == 'update' }
-            }
-            steps {
-                echo "✅ Verifying MongoDB deployment"
-                
-                sh '''
-                    echo "🔍 Checking MongoDB collections and changelog history:"
-                    
-                    # Use mongosh to verify the deployment
-                    mongosh "${DB_URL}" --username "${DB_USERNAME}" --password "${DB_PASSWORD}" --eval "
-                        print('=== Database Collections ===');
-                        db.adminCommand('listCollections').cursor.firstBatch.forEach(
-                            function(collection) {
-                                print('📁 Collection: ' + collection.name);
-                            }
-                        );
-                        
-                        print('\\n=== Recent Changelog Entries ===');
-                        if (db.DATABASECHANGELOG.countDocuments() > 0) {
-                            db.DATABASECHANGELOG.find().sort({orderExecuted: -1}).limit(5).forEach(
-                                function(entry) {
-                                    print('🔄 ID: ' + entry.id + ', Author: ' + entry.author + ', Date: ' + entry.dateExecuted);
-                                }
-                            );
-                        } else {
-                            print('No changelog entries found');
-                        }
-                    " || echo "⚠️ MongoDB verification completed with warnings"
-                '''
             }
         }
 
@@ -317,7 +290,6 @@ pipeline {
                 ⏰ Time: ${new Date()}
                 """
                 
-                // Debug information
                 echo "=== DEBUG INFORMATION ==="
                 echo "Changelog Path: ${params.CHANGELOG_PATH}"
                 echo "Action: ${params.ACTION}"
@@ -326,6 +298,14 @@ pipeline {
                 }
                 echo "MongoDB URL: ${env.DB_URL}"
                 echo "Username: ${env.DB_USERNAME}"
+                
+                // Show mongosh status in failure
+                sh '''
+                    echo "=== MONGOSH DEBUG ==="
+                    echo "PATH: $PATH"
+                    command -v mongosh || echo "mongosh not found"
+                    ls -la /opt/homebrew/bin/mongosh 2>/dev/null || echo "mongosh not in /opt/homebrew/bin"
+                ''' 
             }
         }
     }
@@ -334,16 +314,11 @@ pipeline {
 // Helper function to build Liquibase Maven commands
 def buildLiquibaseCommand(action) {
     def baseCommand = "mvn liquibase:${action}"
-    
-    // Add changelog file parameter
     def command = "${baseCommand} -Dliquibase.changeLogFile=${params.CHANGELOG_PATH}"
-    
-    // Add MongoDB connection parameters
     command += " -Dliquibase.url='${env.DB_URL}'"
     command += " -Dliquibase.username='${env.DB_USERNAME}'"
     command += " -Dliquibase.password='${env.DB_PASSWORD}'"
     
-    // Add action-specific parameters
     switch(action) {
         case 'rollback':
         case 'rollbackSQL':
@@ -354,10 +329,17 @@ def buildLiquibaseCommand(action) {
     return command
 }
 
-// Helper function to extract changeset count from status output
+// FIXED: Helper function to extract changeset count from status output
 def extractChangesetCount(output) {
     try {
-        def matcher = output =~ /(\d+)\s+changeset[s]?\s+(?:have\s+not\s+been\s+applied|to\s+be\s+applied)/
+        // Look for pattern: "X changeset has not been applied" or "X changesets have not been applied"
+        def matcher = output =~ /(\d+)\s+changeset[s]?\s+has?\s+not\s+been\s+applied/
+        if (matcher) {
+            return matcher[0][1]
+        }
+        
+        // Alternative patterns
+        matcher = output =~ /(\d+)\s+changeset[s]?\s+(?:have\s+not\s+been\s+applied|to\s+be\s+applied)/
         if (matcher) {
             return matcher[0][1]
         }
@@ -367,8 +349,8 @@ def extractChangesetCount(output) {
             return matcher[0][1]
         }
         
-        // Check for "0 changesets" or "no changesets"
-        if (output.contains("0 changesets") || output.contains("no changesets")) {
+        // Check for "0 changesets" or up-to-date
+        if (output.contains("is up to date") || output.contains("0 changesets")) {
             return "0"
         }
         
