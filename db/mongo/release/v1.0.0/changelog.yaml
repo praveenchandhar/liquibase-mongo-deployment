@@ -1,9 +1,4 @@
 databaseChangeLog:
-  - changeSet:
-      id: "v1.0.0-users-setup"
-      author: "praveen"
-      comment: "Run the users-setup.js script to set up user collection"
-      changes:
-        - runScript:
-            path: db/mongo/release/v1.0.0/users-setup.js
-            relativeToChangelogFile: true
+  - include:
+      file: users-setup.js
+      relativeToChangelogFile: true
