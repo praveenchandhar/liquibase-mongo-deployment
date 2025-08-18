@@ -1,5 +1,9 @@
 pipeline {
     agent any
+    
+    tools {
+        maven 'Maven-3.9'
+    }
 
     parameters {
         choice(
@@ -14,37 +18,57 @@ pipeline {
     }
 
     stages {
-        stage('Verify Setup') {
+        stage('Verify Environment') {
             steps {
-                sh 'pwd && ls -la'
+                echo "🔍 Verifying environment..."
+                sh 'pwd'
+                sh 'ls -la'
                 sh 'mvn --version'
             }
         }
 
         stage('List Available Versions') {
             steps {
-                sh 'echo "Available release versions:"'
-                sh 'ls -la db/mongo/release/'
+                echo "📁 Available MongoDB release versions:"
+                sh "ls -la db/mongo/release/ || echo 'Directory not found'"
             }
         }
 
-        stage('Setup MongoDB Connection') {
+        stage('Download Maven Dependencies') {
             steps {
-                sh '''
+                echo "📦 Downloading Liquibase dependencies..."
+                sh 'mvn dependency:resolve'
+            }
+        }
+
+        stage('Setup MongoDB Configuration') {
+            steps {
+                echo "⚙️ Setting up MongoDB configuration..."
+                sh """
                     cp liquibase.properties liquibase.properties.backup
-                    sed "s/PASSWORD_HERE/${MONGO_PASSWORD}/g" liquibase.properties.backup > liquibase.properties
-                    echo "MongoDB connection configured"
-                '''
+                    sed 's/PASSWORD_HERE/${MONGO_PASSWORD}/g' liquibase.properties.backup > liquibase.properties
+                    echo "MongoDB configuration updated"
+                """
             }
         }
 
-        stage('Apply Database Changes') {
+        stage('Apply MongoDB Changes') {
             steps {
-                sh '''
-                    echo "🚀 Applying MongoDB changes from version: ${RELEASE_VERSION}"
-                    mvn liquibase:update -Dliquibase.includeAll.path=db/mongo/release/${RELEASE_VERSION}/
-                '''
+                echo "🚀 Applying MongoDB changes from version: ${params.RELEASE_VERSION}"
+                sh """
+                    mvn liquibase:update \\
+                    -Dliquibase.includeAll.path=db/mongo/release/${params.RELEASE_VERSION}/
+                """
             }
+        }
+    }
+
+    post {
+        success {
+            echo "✅ MongoDB deployment completed successfully!"
+        }
+        failure {
+            echo "❌ MongoDB deployment failed!"
         }
     }
 }
