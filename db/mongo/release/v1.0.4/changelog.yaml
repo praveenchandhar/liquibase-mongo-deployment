@@ -1,0 +1,4 @@
+databaseChangeLog:
+  - include:
+      file: demo_ramu.js
+      relativeToChangelogFile: true
