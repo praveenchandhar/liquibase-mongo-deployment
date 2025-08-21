@@ -1,0 +1,4 @@
+databaseChangeLog:
+  - include:
+      file: demo_praveen.js
+      relativeToChangelogFile: true
